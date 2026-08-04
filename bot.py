@@ -9,15 +9,13 @@ from PIL import Image, ImageOps
 from openai import OpenAI
 import telebot
 
-# --- SERVIDOR HTTP PARA O RENDER ---
+# --- SERVIDOR HTTP PARA MANTER O RENDER ATIVO ---
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-    return (
-        "🤖 Bot do Telegram TikTok Shop rodando gratuitamente via Hugging Face!"
-    )
+    return "🤖 Bot do Telegram TikTok Shop rodando via Hugging Face!"
 
 
 # --- VARIÁVEIS DE AMBIENTE ---
@@ -34,6 +32,7 @@ def encode_image(image_path):
 
 
 def otimizar_imagem(caminho_imagem):
+    """Ajusta rotação da foto e otimiza a resolução"""
     with Image.open(caminho_imagem) as img:
         img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
@@ -42,6 +41,7 @@ def otimizar_imagem(caminho_imagem):
 
 
 def analisar_produto_e_criar_prompts(caminho_imagem):
+    """Gera 2 prompts em inglês via GPT-4o-mini caso a legenda esteja vazia"""
     base64_image = encode_image(caminho_imagem)
 
     prompt_instrucao = """
@@ -76,12 +76,13 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
 
 
 def gerar_video_huggingface(caminho_imagem, prompt):
-    """Chama o espaço gratuito do CogVideoX no Hugging Face"""
+    """Chama a API do CogVideoX no Hugging Face com o parâmetro de vídeo corrigido"""
     client = Client("THUDM/CogVideoX-5B-Space")
 
     result = client.predict(
         prompt=prompt,
         image_input=handle_file(caminho_imagem),
+        video_input=None,  # Parâmetro obrigatório do modelo ajustado para None
         api_name="/generate",
     )
 
@@ -99,6 +100,7 @@ def handle_photo(message):
     foto_local = f"temp_{message.message_id}.jpg"
 
     try:
+        # 1. Download e otimização da foto
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
@@ -107,6 +109,7 @@ def handle_photo(message):
 
         otimizar_imagem(foto_local)
 
+        # 2. Definição dos Prompts (Legenda Customizada ou IA)
         user_caption = message.caption if message.caption else ""
 
         if user_caption.strip():
@@ -131,7 +134,7 @@ def handle_photo(message):
             parse_mode="Markdown",
         )
 
-        # 1º Vídeo
+        # 3. Gerar e enviar Vídeo 1
         bot.send_message(
             message.chat.id,
             "🎬 **Gerando Vídeo 1/2 no Hugging Face...** *(Aguarde)*",
@@ -142,7 +145,7 @@ def handle_photo(message):
                 message.chat.id, v1, caption="▶️ **Parte 1:** Ação Inicial"
             )
 
-        # 2º Vídeo
+        # 4. Gerar e enviar Vídeo 2
         bot.send_message(
             message.chat.id,
             "🎬 **Gerando Vídeo 2/2 no Hugging Face...** *(Aguarde)*",
@@ -173,4 +176,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
+        
