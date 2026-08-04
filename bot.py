@@ -1,26 +1,30 @@
 import os
-import time
+import base64
 import requests
 import telebot
-import google.generativeai as genai
+from openai import OpenAI
 import replicate
 
 # --- CONFIGURAÇÃO DE CHAVES ---
 TELEGRAM_TOKEN = "SEU_TELEGRAM_BOT_TOKEN_AQUI"
-GEMINI_KEY = "SUA_GEMINI_API_KEY_AQUI"
+OPENAI_KEY = "SUA_OPENAI_API_KEY_AQUI"
 REPLICATE_KEY = "SEU_REPLICATE_API_TOKEN_AQUI"
 
-# Inicialização
+# Inicialização dos Clientes
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-genai.configure(api_key=GEMINI_KEY)
+client_openai = OpenAI(api_key=OPENAI_KEY)
 os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
 
-# 1. Função que usa o Gemini Vision para analisar o produto e criar o Prompt de Vídeo
+
+# Função auxiliar para converter imagem local em Base64
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+
+# 1. Função que usa o GPT-4o / GPT-4o-mini para analisar o produto e criar o Prompt de Vídeo
 def analisar_produto_e_criar_prompt(caminho_imagem):
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
-    # Upload da imagem para o Gemini
-    sample_file = genai.upload_file(path=caminho_imagem)
+    base64_image = encode_image(caminho_imagem)
     
     prompt_instrucao = """
     Examine esta imagem de produto. Identifique o tipo de objeto (ex: utensílio de cozinha, produto de limpeza, roupa, acessório, etc.).
@@ -32,14 +36,33 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
     3. Mencione a proporção vertical 9:16 perfeita para TikTok/Reels.
     4. Responda APENAS com o prompt em inglês, sem introduções ou explicações.
     """
+
+    response = client_openai.chat.completions.create(
+        model="gpt-4o-mini",  # Você pode usar "gpt-4o" para máxima precisão ou "gpt-4o-mini" para menor custo
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt_instrucao},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        },
+                    },
+                ],
+            }
+        ],
+        max_tokens=400,
+    )
     
-    response = model.generate_content([sample_file, prompt_instrucao])
-    return response.text.strip()
+    return response.choices[0].message.content.strip()
+
 
 # 2. Handler do Telegram quando você envia uma Foto
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    bot.reply_to(message, "📸 Imagem recebida! Analisando o produto e gerando o prompt de animação...")
+    bot.reply_to(message, "📸 Imagem recebida! Analisando o produto com o GPT-4o e gerando o prompt de animação...")
     
     try:
         # Baixar a foto enviada pelo usuário
@@ -50,16 +73,15 @@ def handle_photo(message):
         with open(foto_local, 'wb') as new_file:
             new_file.write(downloaded_file)
             
-        # Passo A: Analisar imagem com Gemini
+        # Passo A: Analisar imagem com OpenAI Vision
         prompt_video = analisar_produto_e_criar_prompt(foto_local)
-        bot.send_message(message.chat.id, f"📝 **Prompt Criado pela IA:**\n`{prompt_video}`", parse_mode="Markdown")
-        bot.send_message(message.chat.id, "🎬 Gerando vídeo por IA... (Isso pode levar de 1 a 3 minutos)")
+        bot.send_message(message.chat.id, f"📝 **Prompt Criado pela IA (OpenAI):**\n`{prompt_video}`", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "🎬 Gerando vídeo no Replicate... (Isso pode levar de 1 a 3 minutos)")
 
-        # Passo B: Fazer upload público temporário da foto para a API de Vídeo
-        # (Neste exemplo usamos o modelo Luma Ray 2 ou MiniMax via Replicate)
+        # Passo B: Gerar vídeo no Replicate
         with open(foto_local, "rb") as image_file:
             output = replicate.run(
-                "luma/ray", # Você também pode usar "minimax/video-01" ou outros modelos I2V
+                "luma/ray", 
                 input={
                     "prompt": prompt_video,
                     "input_image": image_file,
@@ -67,13 +89,13 @@ def handle_photo(message):
                 }
             )
         
-        video_url = output  # URL do vídeo gerado em mp4
+        video_url = output  # URL do vídeo gerado
         
-        # Passo C: Enviar vídeo de volta para o usuário no Telegram
+        # Passo C: Enviar vídeo de volta para o usuário
         bot.send_video(message.chat.id, video_url, caption="✅ Seu vídeo para o TikTok Shop está pronto!")
         
     except Exception as e:
-        bot.reply_to(message, f"❌ Ocorreu um erro ao gerar o vídeo: {str(e)}")
+        bot.reply_to(message, f"❌ Ocorreu um erro: {str(e)}")
 
-print("🤖 Bot iniciado e aguardando fotos...")
+print("🤖 Bot iniciado com OpenAI e aguardando fotos...")
 bot.polling()
