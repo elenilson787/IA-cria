@@ -77,8 +77,9 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
 
 
 def gerar_video_huggingface(caminho_imagem, prompt):
-    """Chama a API do CogVideoX no Hugging Face autenticado com HF_TOKEN"""
-    client = Client("THUDM/CogVideoX-5B-Space", hf_token=HF_TOKEN)
+    """Chama a API do CogVideoX usando o parâmetro 'token' para autenticação"""
+    # CORREÇÃO: Usamos 'token=' em vez de 'hf_token='
+    client = Client("THUDM/CogVideoX-5B-Space", token=HF_TOKEN)
 
     result = client.predict(
         prompt=prompt,
