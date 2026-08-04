@@ -24,13 +24,19 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
 
 
-def otimizar_imagem(caminho_imagem):
-    """Corrige orientação do celular e reduz resolução para evitar o erro E002 no Replicate"""
+def otimizar_imagem_9_16(caminho_imagem):
+    """
+    Corrige a rotação da foto do celular e corta/redimensiona 
+    perfeitamente na proporção 9:16 (480x854) para o TikTok e Wan 2.1
+    """
     with Image.open(caminho_imagem) as img:
-        img = ImageOps.exif_transpose(img)  # Corrige rotação de fotos de celular
+        img = ImageOps.exif_transpose(img)  # Corrige orientação EXIF
         img = img.convert('RGB')
-        img.thumbnail((832, 832))  # Redimensiona para resolução compatível com a GPU
-        img.save(caminho_imagem, 'JPEG', quality=85)
+        
+        # Enquadra e corta exatamente no formato vertical 9:16 (480x854)
+        target_size = (480, 854)
+        img_cropped = ImageOps.fit(img, target_size, Image.Resampling.LANCZOS)
+        img_cropped.save(caminho_imagem, 'JPEG', quality=90)
 
 
 def encode_image(image_path):
@@ -42,7 +48,7 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
     base64_image = encode_image(caminho_imagem)
     
     prompt_instrucao = """
-    Examine esta imagem de produto. Identifique o tipo de objeto (ex: utensílio de cozinha, produto de limpeza, roupa, acessório, etc.).
+    Examine esta imagem de produto. Identifique o tipo de objeto.
     Escreva um PROMPT DETALHADO E OBJETIVO EM INGLÊS para um modelo de geração de vídeo do tipo Image-to-Video.
     
     Regras do Prompt de Vídeo:
@@ -75,7 +81,7 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    bot.reply_to(message, "📸 Imagem recebida! Otimizando e analisando o produto...")
+    bot.reply_to(message, "📸 Imagem recebida! Formatando para 9:16 e analisando com a IA...")
     
     foto_local = f"temp_{message.message_id}.jpg"
     
@@ -91,15 +97,15 @@ def handle_photo(message):
         with open(foto_local, 'wb') as new_file:
             new_file.write(downloaded_file)
             
-        # 2. Otimizar imagem para evitar o erro E002
-        otimizar_imagem(foto_local)
+        # 2. Cortar/Otimizar a foto para 9:16 (evita erro E002)
+        otimizar_imagem_9_16(foto_local)
             
         # 3. Analisar com GPT-4o-mini
         prompt_video = analisar_produto_e_criar_prompt(foto_local)
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
-        bot.send_message(message.chat.id, "🎬 Gerando animação com Wan 2.1... (pode levar de 1 a 2 minutos)")
+        bot.send_message(message.chat.id, "🎬 Gerando animação Wan 2.1... (pode levar de 1 a 2 minutos)")
 
-        # 4. Enviar imagem otimizada para o Replicate
+        # 4. Enviar para o Replicate com schema limpo (apenas prompt e image)
         rep_client = replicate.Client(api_token=REPLICATE_KEY.strip())
 
         with open(foto_local, "rb") as image_file:
@@ -107,8 +113,7 @@ def handle_photo(message):
                 "wavespeedai/wan-2.1-i2v-480p", 
                 input={
                     "prompt": prompt_video,
-                    "image": image_file,
-                    "aspect_ratio": "9:16"
+                    "image": image_file
                 }
             )
         
@@ -120,7 +125,7 @@ def handle_photo(message):
         else:
             video_url = str(output)
         
-        bot.send_video(message.chat.id, video_url, caption="✅ Seu vídeo para o TikTok Shop está pronto!")
+        bot.send_video(message.chat.id, video_url, caption="✅ Seu vídeo 9:16 para o TikTok Shop está pronto!")
         
     except Exception as e:
         bot.reply_to(message, f"❌ Ocorreu um erro: {str(e)}")
