@@ -1,4 +1,4 @@
-gradio_client
+fal-client
 telebot
 pyTelegramBotAPI
 openai
