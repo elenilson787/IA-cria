@@ -1,29 +1,29 @@
 import base64
 from flask import Flask
+from gradio_client import Client, handle_file
 import json
 import os
 import threading
 import time
 from PIL import Image, ImageOps
 from openai import OpenAI
-import replicate
 import telebot
 
-# --- SERVIDOR HTTP PARA MANTER O RENDER ATIVO ---
+# --- SERVIDOR HTTP PARA O RENDER ---
 app = Flask(__name__)
 
 
 @app.route("/")
 def home():
-    return "🤖 Bot do Telegram TikTok Shop está rodando com 2 Vídeos (MiniMax)!"
+    return (
+        "🤖 Bot do Telegram TikTok Shop rodando gratuitamente via Hugging Face!"
+    )
 
 
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-REPLICATE_KEY = os.getenv("REPLICATE_API_TOKEN")
 
-# Inicialização dos Clientes
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
 
@@ -34,7 +34,6 @@ def encode_image(image_path):
 
 
 def otimizar_imagem(caminho_imagem):
-    """Corrige a rotação da foto do celular e ajusta a resolução"""
     with Image.open(caminho_imagem) as img:
         img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
@@ -43,23 +42,13 @@ def otimizar_imagem(caminho_imagem):
 
 
 def analisar_produto_e_criar_prompts(caminho_imagem):
-    """Gera 2 prompts em inglês: 1º para ação inicial, 2º para o resultado final"""
     base64_image = encode_image(caminho_imagem)
 
     prompt_instrucao = """
-    Examine esta imagem de produto. Identifique o tipo de objeto.
-    Você deve gerar DOIS PROMPTS ULTRA DETALHADOS EM INGLÊS para um modelo de geração de vídeo do tipo Image-to-Video.
-    
-    Regras para os Prompts:
-    - PROMPT 1 (Ação Inicial/Preparação): Descreva uma pessoa iniciando o uso do produto no ambiente apropriado. Mostre a preparação, a instalação, o ato de ligar o botão, colocar os ingredientes ou aplicar o produto. Movimento de câmera: [Push in] ou [Slow zoom in].
-    - PROMPT 2 (Resultado/Ação Final): Descreva a conclusão do processo com o mesmo produto. Mostre o resultado perfeito, a pessoa retirando o alimento pronto, exibindo a superfície limpa ou o resultado final com entusiasmo. Movimento de câmera: [Close-up] ou [Wide shot reveal].
-    
-    Responda APENAS em formato JSON válido contendo exatamente as chaves "prompt_1" e "prompt_2".
-    Exemplo de formato esperado:
-    {
-      "prompt_1": "...",
-      "prompt_2": "..."
-    }
+    Examine esta imagem de produto e gere DOIS PROMPTS EM INGLÊS para geração de vídeo Image-to-Video.
+    - PROMPT 1: Ação inicial/preparação.
+    - PROMPT 2: Resultado final/conclusão.
+    Responda APENAS em JSON válido com as chaves "prompt_1" e "prompt_2".
     """
 
     response = client_openai.chat.completions.create(
@@ -82,64 +71,34 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
         max_tokens=500,
     )
 
-    conteudo = response.choices[0].message.content.strip()
-    dados = json.loads(conteudo)
+    dados = json.loads(response.choices[0].message.content.strip())
     return dados.get("prompt_1", ""), dados.get("prompt_2", "")
 
 
-def gerar_video_replicate(caminho_imagem, prompt):
-    """Função auxiliar para chamar o MiniMax no Replicate com proteção contra Rate Limit (429)"""
-    rep_client = replicate.Client(api_token=REPLICATE_KEY.strip())
+def gerar_video_huggingface(caminho_imagem, prompt):
+    """Chama o espaço gratuito do CogVideoX no Hugging Face"""
+    client = Client("THUDM/CogVideoX-5B-Space")
 
-    # Tenta até 3 vezes caso dê erro de limite de requisições (429)
-    for tentativa in range(1, 4):
-        try:
-            with open(caminho_imagem, "rb") as image_file:
-                output = rep_client.run(
-                    "minimax/video-01",
-                    input={
-                        "prompt": prompt,
-                        "first_frame_image": image_file,
-                        "prompt_optimizer": True,
-                    },
-                )
-
-            if hasattr(output, "url"):
-                return output.url
-            elif isinstance(output, list) and len(output) > 0:
-                return str(output[0])
-            return str(output)
-
-        except Exception as e:
-            erro_str = str(e)
-            if "429" in erro_str or "throttled" in erro_str.lower():
-                print(
-                    f"⚠️ Limite de requisição (429) na tentativa {tentativa}. Aguardando 15 segundos..."
-                )
-                time.sleep(15)
-            else:
-                raise e
-
-    raise Exception(
-        "Não foi possível gerar o vídeo após 3 tentativas devido ao limite da API do Replicate."
+    result = client.predict(
+        prompt=prompt,
+        image_input=handle_file(caminho_imagem),
+        api_name="/generate",
     )
+
+    if isinstance(result, (list, tuple)):
+        return result[0]
+    return result
 
 
 @bot.message_handler(content_types=["photo"])
 def handle_photo(message):
-    bot.reply_to(message, "📸 Imagem recebida! Processando o pedido...")
+    bot.reply_to(
+        message, "📸 Imagem recebida! Processando via Hugging Face..."
+    )
 
     foto_local = f"temp_{message.message_id}.jpg"
 
     try:
-        if not REPLICATE_KEY:
-            bot.send_message(
-                message.chat.id,
-                "⚠️ **Erro:** A variável `REPLICATE_API_TOKEN` não foi encontrada no Render.",
-            )
-            return
-
-        # 1. Baixar foto do Telegram e otimizar
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
@@ -148,75 +107,54 @@ def handle_photo(message):
 
         otimizar_imagem(foto_local)
 
-        # 2. Verificar se o usuário enviou instrução personalizada na Legenda
         user_caption = message.caption if message.caption else ""
 
         if user_caption.strip():
-            # Se tem legenda com o caractere '|', separa a Parte 1 da Parte 2
             if "|" in user_caption:
                 partes = user_caption.split("|")
-                prompt_1 = partes[0].strip()
-                prompt_2 = partes[1].strip()
+                prompt_1, prompt_2 = partes[0].strip(), partes[1].strip()
             else:
-                # Se não usou '|', usa a legenda inteira para o 1º vídeo e cria um complemento para o 2º
                 prompt_1 = user_caption.strip()
-                prompt_2 = (
-                    f"{user_caption.strip()}, continuous action, final result"
-                )
-
+                prompt_2 = f"{user_caption.strip()}, continuous action"
             bot.send_message(
-                message.chat.id,
-                "✏️ **Prompts customizados identificados na legenda!**",
+                message.chat.id, "✏️ **Prompts recebidos da legenda!**"
             )
         else:
-            # Se a legenda estiver vazia, gera automaticamente via GPT-4o-mini
             bot.send_message(
-                message.chat.id,
-                "🤖 Legenda vazia. **Analisando produto com IA para gerar o roteiro...**",
+                message.chat.id, "🤖 **Gerando roteiro com IA...**"
             )
             prompt_1, prompt_2 = analisar_produto_e_criar_prompts(foto_local)
 
-        msg_prompts = (
-            f"📝 **Roteiro dos 2 Vídeos:**\n\n"
-            f"🔹 **Vídeo 1 (Ação Inicial):**\n`{prompt_1}`\n\n"
-            f"🔸 **Vídeo 2 (Resultado Final):**\n`{prompt_2}`"
-        )
-        bot.send_message(message.chat.id, msg_prompts, parse_mode="Markdown")
-
-        # 3. Gerar e Enviar Vídeo 1
         bot.send_message(
             message.chat.id,
-            "🎬 **Gerando Vídeo 1/2 (Ação Inicial)...**\n*(Pode levar de 1 a 2 minutos)*",
-        )
-        video_url_1 = gerar_video_replicate(foto_local, prompt_1)
-        bot.send_video(
-            message.chat.id,
-            video_url_1,
-            caption="▶️ **Parte 1:** Ação Inicial / Preparação",
-        )
-
-        # PAUSA DE SEGURANÇA (Evita o Erro 429 na Replicate)
-        bot.send_message(
-            message.chat.id,
-            "⏳ *Aguardando 12 segundos para iniciar o próximo vídeo...*",
+            f"📝 **Roteiro:**\n\n🔹 **Vídeo 1:** `{prompt_1}`\n\n🔸 **Vídeo 2:** `{prompt_2}`",
             parse_mode="Markdown",
         )
-        time.sleep(12)
 
-        # 4. Gerar e Enviar Vídeo 2
+        # 1º Vídeo
         bot.send_message(
             message.chat.id,
-            "🎬 **Gerando Vídeo 2/2 (Resultado Final)...**\n*(Pode levar de 1 a 2 minutos)*",
+            "🎬 **Gerando Vídeo 1/2 no Hugging Face...** *(Aguarde)*",
         )
-        video_url_2 = gerar_video_replicate(foto_local, prompt_2)
-        bot.send_video(
+        video_path_1 = gerar_video_huggingface(foto_local, prompt_1)
+        with open(video_path_1, "rb") as v1:
+            bot.send_video(
+                message.chat.id, v1, caption="▶️ **Parte 1:** Ação Inicial"
+            )
+
+        # 2º Vídeo
+        bot.send_message(
             message.chat.id,
-            video_url_2,
-            caption="✅ **Parte 2:** Resultado Final do Produto",
+            "🎬 **Gerando Vídeo 2/2 no Hugging Face...** *(Aguarde)*",
         )
+        video_path_2 = gerar_video_huggingface(foto_local, prompt_2)
+        with open(video_path_2, "rb") as v2:
+            bot.send_video(
+                message.chat.id, v2, caption="✅ **Parte 2:** Resultado Final"
+            )
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Ocorreu um erro: {str(e)}")
+        bot.reply_to(message, f"❌ Erro: {str(e)}")
 
     finally:
         if os.path.exists(foto_local):
@@ -224,7 +162,7 @@ def handle_photo(message):
 
 
 def iniciar_telegram():
-    print("🤖 Bot do Telegram iniciado...")
+    print("🤖 Bot iniciado...")
     bot.polling(non_stop=True)
 
 
@@ -235,4 +173,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-        
+    
