@@ -85,18 +85,22 @@ def handle_photo(message):
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
         bot.send_message(message.chat.id, "🎬 Gerando animação com Wan 2.1... (pode levar de 1 a 2 minutos)")
 
+        # Converter a imagem local para Base64 Data URI
+        base64_img = encode_image(foto_local)
+        image_data_uri = f"data:image/jpeg;base64,{base64_img}"
+
         # Cliente do Replicate
         rep_client = replicate.Client(api_token=REPLICATE_KEY.strip())
 
-        # Execução com o modelo Wan 2.1 I2V
-        with open(foto_local, "rb") as image_file:
-            output = rep_client.run(
-                "wavespeedai/wan-2.1-i2v-480p", 
-                input={
-                    "prompt": prompt_video,
-                    "image": image_file
-                }
-            )
+        # Execução com Wan 2.1 enviando Data URI e proporção 9:16
+        output = rep_client.run(
+            "wavespeedai/wan-2.1-i2v-480p", 
+            input={
+                "prompt": prompt_video,
+                "image": image_data_uri,
+                "aspect_ratio": "9:16"
+            }
+        )
         
         # Tratamento seguro da URL gerada
         if isinstance(output, list) and len(output) > 0:
