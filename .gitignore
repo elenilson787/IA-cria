@@ -1,0 +1,14 @@
+# Arquivos temporários de imagem
+temp_product.jpg
+*.jpg
+*.png
+
+# Arquivos de sistema e cache do Python
+__pycache__/
+*.pyc
+.DS_Store
+
+# Variáveis de ambiente locais
+.env
+venv/
+.venv/
