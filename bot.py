@@ -9,7 +9,7 @@ import fal_client
 from openai import OpenAI
 import telebot
 
-# --- SERVIDOR HTTP PARA MANTER O RENDER ATIVO ---
+# --- SERVIDOR HTTP PARA O RENDER ---
 app = Flask(__name__)
 
 
@@ -21,7 +21,9 @@ def home():
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-FAL_KEY = os.getenv("FAL_KEY")
+
+# Limpa a chave removendo espaços e aspas acidentais
+FAL_KEY = os.getenv("FAL_KEY", "").strip().replace('"', "").replace("'", "")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
@@ -30,6 +32,12 @@ client_openai = OpenAI(api_key=OPENAI_KEY)
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
+
+
+def imagem_para_data_uri(caminho_imagem):
+    """Converte a imagem local diretamente para formato Data URI (Base64)"""
+    b64_string = encode_image(caminho_imagem)
+    return f"data:image/jpeg;base64,{b64_string}"
 
 
 def otimizar_imagem(caminho_imagem):
@@ -77,22 +85,18 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
 
 
 def gerar_video_fal(caminho_imagem, prompt):
-    """Chama a API do Fal.ai usando o modelo MiniMax"""
+    """Gera vídeo no Fal.ai enviando a imagem inline em Base64"""
     if not FAL_KEY:
-        raise Exception(
-            "Chave FAL_KEY não configurada nas variáveis de ambiente do Render."
-        )
+        raise Exception("FAL_KEY não configurada no Render.")
 
-    # Força a configuração da chave no ambiente da biblioteca do Fal.ai
-    os.environ["FAL_KEY"] = FAL_KEY.strip()
+    os.environ["FAL_KEY"] = FAL_KEY
 
-    # 1. Faz o upload da imagem para os servidores do Fal.ai
-    image_url = fal_client.upload_file(caminho_imagem)
+    # Converte para Data URI ignorando o upload no CDN
+    data_uri = imagem_para_data_uri(caminho_imagem)
 
-    # 2. Executa o modelo de vídeo
     result = fal_client.subscribe(
         "fal-ai/minimax-video",
-        arguments={"prompt": prompt, "image_url": image_url},
+        arguments={"prompt": prompt, "image_url": data_uri},
     )
 
     return result["video"]["url"]
@@ -112,7 +116,6 @@ def handle_photo(message):
             )
             return
 
-        # 1. Download e otimização da foto
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
@@ -121,7 +124,6 @@ def handle_photo(message):
 
         otimizar_imagem(foto_local)
 
-        # 2. Definição dos Prompts (Legenda Customizada ou IA)
         user_caption = message.caption if message.caption else ""
 
         if user_caption.strip():
@@ -146,7 +148,7 @@ def handle_photo(message):
             parse_mode="Markdown",
         )
 
-        # 3. Gerar e enviar Vídeo 1
+        # Vídeo 1
         bot.send_message(
             message.chat.id,
             "🎬 **Gerando Vídeo 1/2 no Fal.ai...** *(Aguarde)*",
@@ -158,7 +160,7 @@ def handle_photo(message):
             caption="▶️ **Parte 1:** Ação Inicial",
         )
 
-        # 4. Gerar e enviar Vídeo 2
+        # Vídeo 2
         bot.send_message(
             message.chat.id, "🎬 **Gerando Vídeo 2/2 no Fal.ai...** *(Quase lá)*"
         )
