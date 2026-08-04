@@ -1,15 +1,23 @@
 import os
 import base64
+import threading
+from flask import Flask
 import telebot
 from openai import OpenAI
 import replicate
 
-# Lê as variáveis de ambiente
+# --- SERVIDOR DUMMY PARA O RENDER NÃO CANCELAR A PORTA ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 Bot do Telegram TikTok Shop está rodando 24/7!"
+
+# --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 REPLICATE_KEY = os.getenv("REPLICATE_API_TOKEN")
 
-# Garante a chave do Replicate no sistema
 if REPLICATE_KEY:
     os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
 
@@ -66,23 +74,19 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
 def handle_photo(message):
     bot.reply_to(message, "📸 Imagem recebida! Analisando o produto com a IA...")
     
-    # Nome único para a imagem baseado no ID da mensagem
     foto_local = f"temp_{message.message_id}.jpg"
     
     try:
-        # Baixar foto do Telegram
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
         with open(foto_local, 'wb') as new_file:
             new_file.write(downloaded_file)
             
-        # Passo A: Analisar com GPT
         prompt_video = analisar_produto_e_criar_prompt(foto_local)
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
         bot.send_message(message.chat.id, "🎬 Gerando animação no Replicate... (pode levar de 1 a 3 minutos)")
 
-        # Passo B: Gerar Vídeo no Replicate
         with open(foto_local, "rb") as image_file:
             output = replicate.run(
                 "luma/ray", 
@@ -94,18 +98,29 @@ def handle_photo(message):
             )
         
         video_url = str(output)
-        
-        # Passo C: Enviar Vídeo
         bot.send_video(message.chat.id, video_url, caption="✅ Seu vídeo para o TikTok Shop está pronto!")
         
     except Exception as e:
         bot.reply_to(message, f"❌ Ocorreu um erro: {str(e)}")
         
     finally:
-        # Limpeza do arquivo temporário
         if os.path.exists(foto_local):
             os.remove(foto_local)
 
-print("🤖 Bot iniciado e pronto para receber fotos...")
-# non_stop=True mantém o bot ativo mesmo em oscilações de rede
-bot.polling(non_stop=True)
+
+# Função para iniciar o bot do Telegram em paralelo
+def iniciar_telegram():
+    print("🤖 Bot do Telegram iniciado...")
+    bot.polling(non_stop=True)
+
+
+if __name__ == "__main__":
+    # Inicia o Telegram em uma Thread separada
+    t = threading.Thread(target=iniciar_telegram)
+    t.daemon = True
+    t.start()
+    
+    # Inicia o Web Server na porta exigida pelo Render
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+    
