@@ -21,6 +21,7 @@ def home():
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
@@ -76,13 +77,13 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
 
 
 def gerar_video_huggingface(caminho_imagem, prompt):
-    """Chama a API do CogVideoX no Hugging Face com o parâmetro de vídeo corrigido"""
-    client = Client("THUDM/CogVideoX-5B-Space")
+    """Chama a API do CogVideoX no Hugging Face autenticado com HF_TOKEN"""
+    client = Client("THUDM/CogVideoX-5B-Space", hf_token=HF_TOKEN)
 
     result = client.predict(
         prompt=prompt,
         image_input=handle_file(caminho_imagem),
-        video_input=None,  # Parâmetro obrigatório do modelo ajustado para None
+        video_input=None,
         api_name="/generate",
     )
 
@@ -176,4 +177,4 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-        
+    
