@@ -83,23 +83,24 @@ def handle_photo(message):
             
         prompt_video = analisar_produto_e_criar_prompt(foto_local)
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
-        bot.send_message(message.chat.id, "🎬 Gerando animação no Replicate... (pode levar de 1 a 3 minutos)")
+        bot.send_message(message.chat.id, "🎬 Gerando animação com o MiniMax... (pode levar de 1 a 3 minutos)")
 
-        # Inicializa cliente Replicate
+        # Passa a chave para o Replicate
         rep_client = replicate.Client(api_token=REPLICATE_KEY.strip())
 
-        # Modelo Minimax Video-01 para animação do produto
+        # Execução padrão exatamente como na documentação da foto
         with open(foto_local, "rb") as image_file:
             output = rep_client.run(
                 "minimax/video-01", 
                 input={
                     "prompt": prompt_video,
-                    "first_frame_image": image_file,
-                    "prompt_optimizer": True
+                    "first_frame_image": image_file
                 }
             )
         
-        video_url = str(output)
+        # Extrai a URL do vídeo conforme a documentação oficial
+        video_url = output.url if hasattr(output, 'url') else str(output)
+        
         bot.send_video(message.chat.id, video_url, caption="✅ Seu vídeo para o TikTok Shop está pronto!")
         
     except Exception as e:
@@ -122,3 +123,4 @@ if __name__ == "__main__":
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+    
