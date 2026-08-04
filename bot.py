@@ -1,28 +1,30 @@
 import os
 import base64
-import requests
 import telebot
 from openai import OpenAI
 import replicate
 
-# O código lê direto das variáveis de ambiente
+# Lê as variáveis de ambiente
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 REPLICATE_KEY = os.getenv("REPLICATE_API_TOKEN")
 
+# Garante a chave do Replicate no sistema
+if REPLICATE_KEY:
+    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
+
 # Inicialização dos Clientes
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
-os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
 
 
-# Função auxiliar para converter imagem local em Base64
+# Converte imagem local em Base64
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 
-# 1. Função que usa o GPT-4o / GPT-4o-mini para analisar o produto e criar o Prompt de Vídeo
+# 1. Analisa a imagem e cria o prompt com o GPT-4o-mini
 def analisar_produto_e_criar_prompt(caminho_imagem):
     base64_image = encode_image(caminho_imagem)
     
@@ -38,7 +40,7 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
     """
 
     response = client_openai.chat.completions.create(
-        model="gpt-4o-mini",  # Você pode usar "gpt-4o" para máxima precisão ou "gpt-4o-mini" para menor custo
+        model="gpt-4o-mini",
         messages=[
             {
                 "role": "user",
@@ -59,26 +61,28 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
     return response.choices[0].message.content.strip()
 
 
-# 2. Handler do Telegram quando você envia uma Foto
+# 2. Handler do Telegram para fotos
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    bot.reply_to(message, "📸 Imagem recebida! Analisando o produto com o GPT-4o e gerando o prompt de animação...")
+    bot.reply_to(message, "📸 Imagem recebida! Analisando o produto com a IA...")
+    
+    # Nome único para a imagem baseado no ID da mensagem
+    foto_local = f"temp_{message.message_id}.jpg"
     
     try:
-        # Baixar a foto enviada pelo usuário
+        # Baixar foto do Telegram
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        foto_local = "temp_product.jpg"
         with open(foto_local, 'wb') as new_file:
             new_file.write(downloaded_file)
             
-        # Passo A: Analisar imagem com OpenAI Vision
+        # Passo A: Analisar com GPT
         prompt_video = analisar_produto_e_criar_prompt(foto_local)
-        bot.send_message(message.chat.id, f"📝 **Prompt Criado pela IA (OpenAI):**\n`{prompt_video}`", parse_mode="Markdown")
-        bot.send_message(message.chat.id, "🎬 Gerando vídeo no Replicate... (Isso pode levar de 1 a 3 minutos)")
+        bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "🎬 Gerando animação no Replicate... (pode levar de 1 a 3 minutos)")
 
-        # Passo B: Gerar vídeo no Replicate
+        # Passo B: Gerar Vídeo no Replicate
         with open(foto_local, "rb") as image_file:
             output = replicate.run(
                 "luma/ray", 
@@ -89,13 +93,19 @@ def handle_photo(message):
                 }
             )
         
-        video_url = output  # URL do vídeo gerado
+        video_url = str(output)
         
-        # Passo C: Enviar vídeo de volta para o usuário
+        # Passo C: Enviar Vídeo
         bot.send_video(message.chat.id, video_url, caption="✅ Seu vídeo para o TikTok Shop está pronto!")
         
     except Exception as e:
         bot.reply_to(message, f"❌ Ocorreu um erro: {str(e)}")
+        
+    finally:
+        # Limpeza do arquivo temporário
+        if os.path.exists(foto_local):
+            os.remove(foto_local)
 
-print("🤖 Bot iniciado com OpenAI e aguardando fotos...")
-bot.polling()
+print("🤖 Bot iniciado e pronto para receber fotos...")
+# non_stop=True mantém o bot ativo mesmo em oscilações de rede
+bot.polling(non_stop=True)
