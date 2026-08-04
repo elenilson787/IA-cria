@@ -1,6 +1,6 @@
+gradio_client
+telebot
 pyTelegramBotAPI
 openai
-replicate
-requests
-flask
 Pillow
+Flask
