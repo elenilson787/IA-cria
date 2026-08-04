@@ -6,12 +6,12 @@ import telebot
 from openai import OpenAI
 import replicate
 
-# --- SERVIDOR WEBSOCKET/HTTP PARA O RENDER ---
+# --- SERVIDOR HTTP PARA MANTER O RENDER ATIVO ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Bot do Telegram TikTok Shop está rodando!"
+    return "🤖 Bot do Telegram TikTok Shop está rodando com Wan 2.1!"
 
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -72,7 +72,7 @@ def handle_photo(message):
     
     try:
         if not REPLICATE_KEY:
-            bot.send_message(message.chat.id, "⚠️ **Erro:** O sistema não encontrou a variável `REPLICATE_API_TOKEN` no Render.")
+            bot.send_message(message.chat.id, "⚠️ **Erro:** A variável `REPLICATE_API_TOKEN` não foi encontrada no Render.")
             return
 
         file_info = bot.get_file(message.photo[-1].file_id)
@@ -83,23 +83,28 @@ def handle_photo(message):
             
         prompt_video = analisar_produto_e_criar_prompt(foto_local)
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
-        bot.send_message(message.chat.id, "🎬 Gerando animação com o MiniMax... (pode levar de 1 a 3 minutos)")
+        bot.send_message(message.chat.id, "🎬 Gerando animação com Wan 2.1... (pode levar de 1 a 2 minutos)")
 
-        # Passa a chave para o Replicate
+        # Cliente do Replicate
         rep_client = replicate.Client(api_token=REPLICATE_KEY.strip())
 
-        # Execução padrão exatamente como na documentação da foto
+        # Execução com o modelo Wan 2.1 I2V
         with open(foto_local, "rb") as image_file:
             output = rep_client.run(
-                "minimax/video-01", 
+                "wavespeedai/wan-2.1-i2v-480p", 
                 input={
                     "prompt": prompt_video,
-                    "first_frame_image": image_file
+                    "image": image_file
                 }
             )
         
-        # Extrai a URL do vídeo conforme a documentação oficial
-        video_url = output.url if hasattr(output, 'url') else str(output)
+        # Tratamento seguro da URL gerada
+        if isinstance(output, list) and len(output) > 0:
+            video_url = str(output[0])
+        elif hasattr(output, 'url'):
+            video_url = output.url
+        else:
+            video_url = str(output)
         
         bot.send_video(message.chat.id, video_url, caption="✅ Seu vídeo para o TikTok Shop está pronto!")
         
