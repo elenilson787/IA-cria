@@ -6,33 +6,28 @@ import telebot
 from openai import OpenAI
 import replicate
 
-# --- SERVIDOR DUMMY PARA O RENDER NÃO CANCELAR A PORTA ---
+# --- SERVIDOR DUMMY PARA O RENDER ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Bot do Telegram TikTok Shop está rodando 24/7!"
+    return "🤖 Bot do Telegram TikTok Shop está rodando!"
 
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 REPLICATE_KEY = os.getenv("REPLICATE_API_TOKEN")
 
-if REPLICATE_KEY:
-    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_KEY
-
 # Inicialização dos Clientes
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
 
 
-# Converte imagem local em Base64
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 
-# 1. Analisa a imagem e cria o prompt com o GPT-4o-mini
 def analisar_produto_e_criar_prompt(caminho_imagem):
     base64_image = encode_image(caminho_imagem)
     
@@ -41,7 +36,7 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
     Escreva um PROMPT ULTRA DETALHADO EM INGLÊS para um modelo de geração de vídeo do tipo Image-to-Video.
     
     Regras do Prompt de Vídeo:
-    1. Descreva uma mulher usando este objeto exato de forma natural, realista e persuasiva no ambiente apropriado (ex: cozinha moderna se for utensílio, sala se for limpeza, vestindo se for roupa).
+    1. Descreva uma mulher usando este objeto exato de forma natural, realista e persuasiva no ambiente apropriado.
     2. Especifique o movimento de câmera (ex: slow zoom in, eye-level cinematic shot).
     3. Mencione a proporção vertical 9:16 perfeita para TikTok/Reels.
     4. Responda APENAS com o prompt em inglês, sem introduções ou explicações.
@@ -69,7 +64,6 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
     return response.choices[0].message.content.strip()
 
 
-# 2. Handler do Telegram para fotos
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     bot.reply_to(message, "📸 Imagem recebida! Analisando o produto com a IA...")
@@ -87,8 +81,11 @@ def handle_photo(message):
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
         bot.send_message(message.chat.id, "🎬 Gerando animação no Replicate... (pode levar de 1 a 3 minutos)")
 
+        # Inicializa cliente Replicate passando a chave explicitamente
+        rep_client = replicate.Client(api_token=REPLICATE_KEY)
+
         with open(foto_local, "rb") as image_file:
-            output = replicate.run(
+            output = rep_client.run(
                 "luma/ray", 
                 input={
                     "prompt": prompt_video,
@@ -108,19 +105,16 @@ def handle_photo(message):
             os.remove(foto_local)
 
 
-# Função para iniciar o bot do Telegram em paralelo
 def iniciar_telegram():
     print("🤖 Bot do Telegram iniciado...")
     bot.polling(non_stop=True)
 
 
 if __name__ == "__main__":
-    # Inicia o Telegram em uma Thread separada
     t = threading.Thread(target=iniciar_telegram)
     t.daemon = True
     t.start()
     
-    # Inicia o Web Server na porta exigida pelo Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
     
