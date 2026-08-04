@@ -1,11 +1,9 @@
 import os
-import base64
 import threading
 from flask import Flask
 import telebot
 from openai import OpenAI
 import replicate
-from PIL import Image, ImageOps
 
 # --- SERVIDOR HTTP PARA MANTER O RENDER ATIVO ---
 app = Flask(__name__)
@@ -24,29 +22,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
 
 
-def otimizar_imagem_9_16(caminho_imagem):
-    """
-    Corrige a rotação da foto do celular e corta/redimensiona 
-    perfeitamente na proporção 9:16 (480x854) para o TikTok e Wan 2.1
-    """
-    with Image.open(caminho_imagem) as img:
-        img = ImageOps.exif_transpose(img)  # Corrige orientação EXIF
-        img = img.convert('RGB')
-        
-        # Enquadra e corta exatamente no formato vertical 9:16 (480x854)
-        target_size = (480, 854)
-        img_cropped = ImageOps.fit(img, target_size, Image.Resampling.LANCZOS)
-        img_cropped.save(caminho_imagem, 'JPEG', quality=90)
-
-
-def encode_image(image_path):
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
-
-
-def analisar_produto_e_criar_prompt(caminho_imagem):
-    base64_image = encode_image(caminho_imagem)
-    
+def analisar_produto_e_criar_prompt(url_imagem):
     prompt_instrucao = """
     Examine esta imagem de produto. Identifique o tipo de objeto.
     Escreva um PROMPT DETALHADO E OBJETIVO EM INGLÊS para um modelo de geração de vídeo do tipo Image-to-Video.
@@ -67,7 +43,7 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
+                            "url": url_imagem
                         },
                     },
                 ],
@@ -81,43 +57,35 @@ def analisar_produto_e_criar_prompt(caminho_imagem):
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    bot.reply_to(message, "📸 Imagem recebida! Formatando para 9:16 e analisando com a IA...")
-    
-    foto_local = f"temp_{message.message_id}.jpg"
+    bot.reply_to(message, "📸 Imagem recebida! Obtendo link e analisando com a IA...")
     
     try:
         if not REPLICATE_KEY:
             bot.send_message(message.chat.id, "⚠️ **Erro:** A variável `REPLICATE_API_TOKEN` não foi encontrada no Render.")
             return
 
-        # 1. Baixar foto do Telegram
+        # 1. Obter URL pública direta da imagem hospedada no Telegram
         file_info = bot.get_file(message.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        with open(foto_local, 'wb') as new_file:
-            new_file.write(downloaded_file)
+        url_imagem = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
             
-        # 2. Cortar/Otimizar a foto para 9:16 (evita erro E002)
-        otimizar_imagem_9_16(foto_local)
-            
-        # 3. Analisar com GPT-4o-mini
-        prompt_video = analisar_produto_e_criar_prompt(foto_local)
+        # 2. Analisar com GPT-4o-mini passando a URL direta
+        prompt_video = analisar_produto_e_criar_prompt(url_imagem)
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
-        bot.send_message(message.chat.id, "🎬 Gerando animação Wan 2.1... (pode levar de 1 a 2 minutos)")
+        bot.send_message(message.chat.id, "🎬 Gerando animação com Wan 2.1... (pode levar de 1 a 2 minutos)")
 
-        # 4. Enviar para o Replicate com schema limpo (apenas prompt e image)
+        # 3. Enviar a URL pública direta para o Replicate
         rep_client = replicate.Client(api_token=REPLICATE_KEY.strip())
 
-        with open(foto_local, "rb") as image_file:
-            output = rep_client.run(
-                "wavespeedai/wan-2.1-i2v-480p", 
-                input={
-                    "prompt": prompt_video,
-                    "image": image_file
-                }
-            )
+        output = rep_client.run(
+            "wavespeedai/wan-2.1-i2v-480p", 
+            input={
+                "prompt": prompt_video,
+                "image": url_imagem,
+                "aspect_ratio": "9:16"
+            }
+        )
         
-        # Tratamento seguro da URL gerada
+        # Tratamento da URL do vídeo gerado
         if isinstance(output, list) and len(output) > 0:
             video_url = str(output[0])
         elif hasattr(output, 'url'):
@@ -129,10 +97,6 @@ def handle_photo(message):
         
     except Exception as e:
         bot.reply_to(message, f"❌ Ocorreu um erro: {str(e)}")
-        
-    finally:
-        if os.path.exists(foto_local):
-            os.remove(foto_local)
 
 
 def iniciar_telegram():
