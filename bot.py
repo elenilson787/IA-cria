@@ -6,7 +6,7 @@ import telebot
 from openai import OpenAI
 import replicate
 
-# --- SERVIDOR DUMMY PARA O RENDER ---
+# --- SERVIDOR WEBSOCKET/HTTP PARA O RENDER ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -71,6 +71,10 @@ def handle_photo(message):
     foto_local = f"temp_{message.message_id}.jpg"
     
     try:
+        if not REPLICATE_KEY:
+            bot.send_message(message.chat.id, "⚠️ **Erro:** O sistema não encontrou a variável `REPLICATE_API_TOKEN` no Render.")
+            return
+
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
@@ -81,16 +85,17 @@ def handle_photo(message):
         bot.send_message(message.chat.id, f"📝 **Prompt Gerado:**\n`{prompt_video}`", parse_mode="Markdown")
         bot.send_message(message.chat.id, "🎬 Gerando animação no Replicate... (pode levar de 1 a 3 minutos)")
 
-        # Inicializa cliente Replicate passando a chave explicitamente
-        rep_client = replicate.Client(api_token=REPLICATE_KEY)
+        # Inicializa cliente Replicate
+        rep_client = replicate.Client(api_token=REPLICATE_KEY.strip())
 
+        # Modelo Minimax Video-01 para animação do produto
         with open(foto_local, "rb") as image_file:
             output = rep_client.run(
-                "luma/ray", 
+                "minimax/video-01", 
                 input={
                     "prompt": prompt_video,
-                    "input_image": image_file,
-                    "aspect_ratio": "9:16"
+                    "first_frame_image": image_file,
+                    "prompt_optimizer": True
                 }
             )
         
@@ -117,4 +122,3 @@ if __name__ == "__main__":
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
