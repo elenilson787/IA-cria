@@ -1,6 +1,5 @@
 import base64
 from flask import Flask
-from gradio_client import Client, handle_file
 import json
 import os
 import threading
@@ -8,20 +7,19 @@ import time
 from PIL import Image, ImageOps
 from openai import OpenAI
 import telebot
+import fal_client
 
 # --- SERVIDOR HTTP PARA MANTER O RENDER ATIVO ---
 app = Flask(__name__)
 
-
 @app.route("/")
 def home():
-    return "🤖 Bot do Telegram TikTok Shop rodando via Hugging Face!"
-
+    return "🤖 Bot do Telegram TikTok Shop rodando via Fal.ai!"
 
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")
+FAL_KEY = os.getenv("FAL_KEY")  # A nova chave do Fal.ai
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
@@ -47,8 +45,8 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
 
     prompt_instrucao = """
     Examine esta imagem de produto e gere DOIS PROMPTS EM INGLÊS para geração de vídeo Image-to-Video.
-    - PROMPT 1: Ação inicial/preparação.
-    - PROMPT 2: Resultado final/conclusão.
+    - PROMPT 1: Ação inicial/preparação. Movimento de câmera: [Push in].
+    - PROMPT 2: Resultado final/conclusão. Movimento de câmera: [Close-up].
     Responda APENAS em JSON válido com as chaves "prompt_1" e "prompt_2".
     """
 
@@ -76,32 +74,37 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
     return dados.get("prompt_1", ""), dados.get("prompt_2", "")
 
 
-def gerar_video_huggingface(caminho_imagem, prompt):
-    """Chama a API do CogVideoX usando o parâmetro 'token' para autenticação"""
-    # CORREÇÃO: Usamos 'token=' em vez de 'hf_token='
-    client = Client("THUDM/CogVideoX-5B-Space", token=HF_TOKEN)
+def gerar_video_fal(caminho_imagem, prompt):
+    """Chama a API do Fal.ai usando o modelo MiniMax"""
+    # 1. Faz o upload da imagem para os servidores do Fal.ai
+    image_url = fal_client.upload_file(caminho_imagem)
 
-    result = client.predict(
-        prompt=prompt,
-        image_input=handle_file(caminho_imagem),
-        video_input=None,
-        api_name="/generate",
+    # 2. Inscreve a requisição para gerar o vídeo
+    result = fal_client.subscribe(
+        "fal-ai/minimax-video",
+        arguments={
+            "prompt": prompt,
+            "image_url": image_url
+        },
     )
 
-    if isinstance(result, (list, tuple)):
-        return result[0]
-    return result
+    return result["video"]["url"]
 
 
 @bot.message_handler(content_types=["photo"])
 def handle_photo(message):
-    bot.reply_to(
-        message, "📸 Imagem recebida! Processando via Hugging Face..."
-    )
+    bot.reply_to(message, "📸 Imagem recebida! Processando pelo Fal.ai...")
 
     foto_local = f"temp_{message.message_id}.jpg"
 
     try:
+        if not FAL_KEY:
+            bot.send_message(
+                message.chat.id,
+                "⚠️ **Erro:** A variável `FAL_KEY` não foi encontrada no Render.",
+            )
+            return
+
         # 1. Download e otimização da foto
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -121,13 +124,9 @@ def handle_photo(message):
             else:
                 prompt_1 = user_caption.strip()
                 prompt_2 = f"{user_caption.strip()}, continuous action"
-            bot.send_message(
-                message.chat.id, "✏️ **Prompts recebidos da legenda!**"
-            )
+            bot.send_message(message.chat.id, "✏️ **Prompts recebidos da legenda!**")
         else:
-            bot.send_message(
-                message.chat.id, "🤖 **Gerando roteiro com IA...**"
-            )
+            bot.send_message(message.chat.id, "🤖 **Gerando roteiro com IA...**")
             prompt_1, prompt_2 = analisar_produto_e_criar_prompts(foto_local)
 
         bot.send_message(
@@ -137,29 +136,17 @@ def handle_photo(message):
         )
 
         # 3. Gerar e enviar Vídeo 1
-        bot.send_message(
-            message.chat.id,
-            "🎬 **Gerando Vídeo 1/2 no Hugging Face...** *(Aguarde)*",
-        )
-        video_path_1 = gerar_video_huggingface(foto_local, prompt_1)
-        with open(video_path_1, "rb") as v1:
-            bot.send_video(
-                message.chat.id, v1, caption="▶️ **Parte 1:** Ação Inicial"
-            )
+        bot.send_message(message.chat.id, "🎬 **Gerando Vídeo 1/2 no Fal.ai...** *(Aguarde, é rápido!)*")
+        video_url_1 = gerar_video_fal(foto_local, prompt_1)
+        bot.send_video(message.chat.id, video_url_1, caption="▶️ **Parte 1:** Ação Inicial")
 
         # 4. Gerar e enviar Vídeo 2
-        bot.send_message(
-            message.chat.id,
-            "🎬 **Gerando Vídeo 2/2 no Hugging Face...** *(Aguarde)*",
-        )
-        video_path_2 = gerar_video_huggingface(foto_local, prompt_2)
-        with open(video_path_2, "rb") as v2:
-            bot.send_video(
-                message.chat.id, v2, caption="✅ **Parte 2:** Resultado Final"
-            )
+        bot.send_message(message.chat.id, "🎬 **Gerando Vídeo 2/2 no Fal.ai...** *(Quase lá)*")
+        video_url_2 = gerar_video_fal(foto_local, prompt_2)
+        bot.send_video(message.chat.id, video_url_2, caption="✅ **Parte 2:** Resultado Final")
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Erro: {str(e)}")
+        bot.reply_to(message, f"❌ Erro ao gerar: {str(e)}")
 
     finally:
         if os.path.exists(foto_local):
