@@ -5,21 +5,23 @@ import os
 import threading
 import time
 from PIL import Image, ImageOps
+import fal_client
 from openai import OpenAI
 import telebot
-import fal_client
 
 # --- SERVIDOR HTTP PARA MANTER O RENDER ATIVO ---
 app = Flask(__name__)
+
 
 @app.route("/")
 def home():
     return "🤖 Bot do Telegram TikTok Shop rodando via Fal.ai!"
 
+
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-FAL_KEY = os.getenv("FAL_KEY")  # A nova chave do Fal.ai
+FAL_KEY = os.getenv("FAL_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
@@ -31,7 +33,7 @@ def encode_image(image_path):
 
 
 def otimizar_imagem(caminho_imagem):
-    """Ajusta rotação da foto e otimiza a resolução"""
+    """Ajusta a rotação da foto do celular e otimiza a resolução"""
     with Image.open(caminho_imagem) as img:
         img = ImageOps.exif_transpose(img)
         img = img.convert("RGB")
@@ -76,16 +78,21 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
 
 def gerar_video_fal(caminho_imagem, prompt):
     """Chama a API do Fal.ai usando o modelo MiniMax"""
+    if not FAL_KEY:
+        raise Exception(
+            "Chave FAL_KEY não configurada nas variáveis de ambiente do Render."
+        )
+
+    # Força a configuração da chave no ambiente da biblioteca do Fal.ai
+    os.environ["FAL_KEY"] = FAL_KEY.strip()
+
     # 1. Faz o upload da imagem para os servidores do Fal.ai
     image_url = fal_client.upload_file(caminho_imagem)
 
-    # 2. Inscreve a requisição para gerar o vídeo
+    # 2. Executa o modelo de vídeo
     result = fal_client.subscribe(
         "fal-ai/minimax-video",
-        arguments={
-            "prompt": prompt,
-            "image_url": image_url
-        },
+        arguments={"prompt": prompt, "image_url": image_url},
     )
 
     return result["video"]["url"]
@@ -124,9 +131,13 @@ def handle_photo(message):
             else:
                 prompt_1 = user_caption.strip()
                 prompt_2 = f"{user_caption.strip()}, continuous action"
-            bot.send_message(message.chat.id, "✏️ **Prompts recebidos da legenda!**")
+            bot.send_message(
+                message.chat.id, "✏️ **Prompts recebidos da legenda!**"
+            )
         else:
-            bot.send_message(message.chat.id, "🤖 **Gerando roteiro com IA...**")
+            bot.send_message(
+                message.chat.id, "🤖 **Gerando roteiro com IA...**"
+            )
             prompt_1, prompt_2 = analisar_produto_e_criar_prompts(foto_local)
 
         bot.send_message(
@@ -136,14 +147,27 @@ def handle_photo(message):
         )
 
         # 3. Gerar e enviar Vídeo 1
-        bot.send_message(message.chat.id, "🎬 **Gerando Vídeo 1/2 no Fal.ai...** *(Aguarde, é rápido!)*")
+        bot.send_message(
+            message.chat.id,
+            "🎬 **Gerando Vídeo 1/2 no Fal.ai...** *(Aguarde)*",
+        )
         video_url_1 = gerar_video_fal(foto_local, prompt_1)
-        bot.send_video(message.chat.id, video_url_1, caption="▶️ **Parte 1:** Ação Inicial")
+        bot.send_video(
+            message.chat.id,
+            video_url_1,
+            caption="▶️ **Parte 1:** Ação Inicial",
+        )
 
         # 4. Gerar e enviar Vídeo 2
-        bot.send_message(message.chat.id, "🎬 **Gerando Vídeo 2/2 no Fal.ai...** *(Quase lá)*")
+        bot.send_message(
+            message.chat.id, "🎬 **Gerando Vídeo 2/2 no Fal.ai...** *(Quase lá)*"
+        )
         video_url_2 = gerar_video_fal(foto_local, prompt_2)
-        bot.send_video(message.chat.id, video_url_2, caption="✅ **Parte 2:** Resultado Final")
+        bot.send_video(
+            message.chat.id,
+            video_url_2,
+            caption="✅ **Parte 2:** Resultado Final",
+        )
 
     except Exception as e:
         bot.reply_to(message, f"❌ Erro ao gerar: {str(e)}")
