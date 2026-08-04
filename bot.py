@@ -5,10 +5,10 @@ import telebot
 from openai import OpenAI
 import replicate
 
-# --- CONFIGURAÇÃO DE CHAVES ---
-TELEGRAM_TOKEN = "SEU_TELEGRAM_BOT_TOKEN_AQUI"
-OPENAI_KEY = "SUA_OPENAI_API_KEY_AQUI"
-REPLICATE_KEY = "SEU_REPLICATE_API_TOKEN_AQUI"
+# O código lê direto das variáveis de ambiente
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+REPLICATE_KEY = os.getenv("REPLICATE_API_TOKEN")
 
 # Inicialização dos Clientes
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
