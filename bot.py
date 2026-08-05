@@ -5,8 +5,8 @@ import os
 import threading
 import time
 from PIL import Image, ImageOps
-import fal_client
 from openai import OpenAI
+import requests
 import telebot
 
 # --- SERVIDOR HTTP PARA O RENDER ---
@@ -15,15 +15,13 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "🤖 Bot do Telegram TikTok Shop rodando via Fal.ai!"
+    return "🤖 Bot do Telegram TikTok Shop rodando via Modal.com Serverless GPU!"
 
 
 # --- VARIÁVEIS DE AMBIENTE ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
-
-# Limpa a chave removendo espaços e aspas acidentais
-FAL_KEY = os.getenv("FAL_KEY", "").strip().replace('"', "").replace("'", "")
+MODAL_URL = os.getenv("MODAL_URL")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client_openai = OpenAI(api_key=OPENAI_KEY)
@@ -32,12 +30,6 @@ client_openai = OpenAI(api_key=OPENAI_KEY)
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
-
-
-def imagem_para_data_uri(caminho_imagem):
-    """Converte a imagem local diretamente para formato Data URI (Base64)"""
-    b64_string = encode_image(caminho_imagem)
-    return f"data:image/jpeg;base64,{b64_string}"
 
 
 def otimizar_imagem(caminho_imagem):
@@ -84,38 +76,50 @@ def analisar_produto_e_criar_prompts(caminho_imagem):
     return dados.get("prompt_1", ""), dados.get("prompt_2", "")
 
 
-def gerar_video_fal(caminho_imagem, prompt):
-    """Gera vídeo no Fal.ai enviando a imagem inline em Base64"""
-    if not FAL_KEY:
-        raise Exception("FAL_KEY não configurada no Render.")
+def gerar_video_modal(caminho_imagem, prompt):
+    """Envia a imagem e prompt para a GPU serverless no Modal.com"""
+    if not MODAL_URL:
+        raise Exception(
+            "Variável MODAL_URL não configurada no painel do Render!"
+        )
 
-    os.environ["FAL_KEY"] = FAL_KEY
+    # Converte imagem local para Base64
+    img_b64 = encode_image(caminho_imagem)
 
-    # Converte para Data URI ignorando o upload no CDN
-    data_uri = imagem_para_data_uri(caminho_imagem)
+    payload = {"prompt": prompt, "image_base64": img_b64}
 
-    result = fal_client.subscribe(
-        "fal-ai/minimax-video",
-        arguments={"prompt": prompt, "image_url": data_uri},
-    )
+    # Envia requisição para a GPU no Modal (timeout de 5 minutos)
+    response = requests.post(MODAL_URL, json=payload, timeout=300)
 
-    return result["video"]["url"]
+    if response.status_code == 200:
+        caminho_video = f"temp_video_{int(time.time())}.mp4"
+        with open(caminho_video, "wb") as f:
+            f.write(response.content)
+        return caminho_video
+    else:
+        raise Exception(
+            f"Erro na GPU do Modal ({response.status_code}): {response.text}"
+        )
 
 
 @bot.message_handler(content_types=["photo"])
 def handle_photo(message):
-    bot.reply_to(message, "📸 Imagem recebida! Processando pelo Fal.ai...")
+    bot.reply_to(
+        message, "📸 Imagem recebida! Processando na GPU Serverless..."
+    )
 
     foto_local = f"temp_{message.message_id}.jpg"
+    videos_gerados = []
 
     try:
-        if not FAL_KEY:
+        if not MODAL_URL:
             bot.send_message(
                 message.chat.id,
-                "⚠️ **Erro:** A variável `FAL_KEY` não foi encontrada no Render.",
+                "⚠️ **Erro:** A variável `MODAL_URL` não foi encontrada no Render.",
             )
             return
 
+        # 1. Download e otimização da foto
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
@@ -124,6 +128,7 @@ def handle_photo(message):
 
         otimizar_imagem(foto_local)
 
+        # 2. Obtenção dos prompts
         user_caption = message.caption if message.caption else ""
 
         if user_caption.strip():
@@ -148,35 +153,42 @@ def handle_photo(message):
             parse_mode="Markdown",
         )
 
-        # Vídeo 1
+        # 3. Gerar Vídeo 1
         bot.send_message(
             message.chat.id,
-            "🎬 **Gerando Vídeo 1/2 no Fal.ai...** *(Aguarde)*",
+            "🎬 **Gerando Vídeo 1/2 na GPU...** *(Pode levar cerca de 1 minuto)*",
         )
-        video_url_1 = gerar_video_fal(foto_local, prompt_1)
-        bot.send_video(
-            message.chat.id,
-            video_url_1,
-            caption="▶️ **Parte 1:** Ação Inicial",
-        )
+        v1_path = gerar_video_modal(foto_local, prompt_1)
+        videos_gerados.append(v1_path)
 
-        # Vídeo 2
+        with open(v1_path, "rb") as vid:
+            bot.send_video(
+                message.chat.id, vid, caption="▶️ **Parte 1:** Ação Inicial"
+            )
+
+        # 4. Gerar Vídeo 2
         bot.send_message(
-            message.chat.id, "🎬 **Gerando Vídeo 2/2 no Fal.ai...** *(Quase lá)*"
-        )
-        video_url_2 = gerar_video_fal(foto_local, prompt_2)
-        bot.send_video(
             message.chat.id,
-            video_url_2,
-            caption="✅ **Parte 2:** Resultado Final",
+            "🎬 **Gerando Vídeo 2/2 na GPU...** *(Quase lá)*",
         )
+        v2_path = gerar_video_modal(foto_local, prompt_2)
+        videos_gerados.append(v2_path)
+
+        with open(v2_path, "rb") as vid:
+            bot.send_video(
+                message.chat.id, vid, caption="✅ **Parte 2:** Resultado Final"
+            )
 
     except Exception as e:
-        bot.reply_to(message, f"❌ Erro ao gerar: {str(e)}")
+        bot.reply_to(message, f"❌ Erro ao gerar vídeo: {str(e)}")
 
     finally:
+        # Limpeza de arquivos temporários
         if os.path.exists(foto_local):
             os.remove(foto_local)
+        for path in videos_gerados:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 def iniciar_telegram():
@@ -191,4 +203,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
