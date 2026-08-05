@@ -1,6 +1,5 @@
-fal-client
-telebot
 pyTelegramBotAPI
 openai
-Pillow
-Flask
+pillow
+flask
+requests
